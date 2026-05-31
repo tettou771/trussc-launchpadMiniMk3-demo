@@ -28,8 +28,8 @@ void tcApp::update() {
         started_ = true;
 #if defined(__EMSCRIPTEN__)
         // Web MIDI is granted without sysex, so Programmer mode can't be entered
-        // (sending 0xF0 throws NotAllowedError). Stay a screen/mouse-only demo.
-        logNotice("launchpad") << "web build: screen/mouse only (Programmer mode needs sysex)";
+        // (sending 0xF0 throws NotAllowedError). The web build can't drive it.
+        logNotice("launchpad") << "web build: Launchpad needs sysex (native only)";
 #else
         deviceConnected_ = lp_.connect("Launchpad");
         if (deviceConnected_) {
@@ -37,7 +37,7 @@ void tcApp::update() {
             lp_.setArrowLed(lp::Arrow::Left,  lp::color::DimBlue);
             lp_.setArrowLed(lp::Arrow::Right, lp::color::DimBlue);
         } else {
-            logWarning("launchpad") << "No Launchpad found - screen/mouse only";
+            logWarning("launchpad") << "No Launchpad found (connect one over USB and relaunch)";
         }
 #endif
     }

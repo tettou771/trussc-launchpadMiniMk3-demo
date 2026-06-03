@@ -5,11 +5,15 @@ void tcApp::setup() {
     kit_.setup();
 
     // Wire device input. A pad event drives the active mode; the arrows switch.
+    // These callbacks fire on libremidi's input thread, so guard the state they
+    // share with update()/draw() behind mtx_.
     lp_.onPad = [this](int col, int row, bool pressed, int /*vel*/) {
+        std::lock_guard<std::mutex> lock(mtx_);
         modePad(col, row, pressed);
     };
     lp_.onArrow = [this](lp::Arrow arrow, bool pressed) {
         if (!pressed) return;
+        std::lock_guard<std::mutex> lock(mtx_);
         if (arrow == lp::Arrow::Right) switchMode(+1);
         else if (arrow == lp::Arrow::Left) switchMode(-1);
     };
@@ -24,6 +28,9 @@ void tcApp::setup() {
 }
 
 void tcApp::update() {
+    // Guard the mode/grid state the MIDI thread also touches (onPad/onArrow).
+    std::lock_guard<std::mutex> lock(mtx_);
+
     if (!started_ && midiReady()) {
         started_ = true;
 #if defined(__EMSCRIPTEN__)
@@ -42,12 +49,13 @@ void tcApp::update() {
 #endif
     }
 
-    lp_.update();
     modeUpdate(getElapsedTime());
     if (deviceConnected_) pushGridToDevice();
 }
 
 void tcApp::draw() {
+    std::lock_guard<std::mutex> lock(mtx_);  // mode_/grid_ are touched by the MIDI thread
+
     clear(0.08f);
 
     const float cs = cellSize();

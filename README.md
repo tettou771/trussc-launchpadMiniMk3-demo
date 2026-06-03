@@ -62,6 +62,10 @@ differently:
 - LED color = note velocity (Mk3 color palette index).
 - **SysEx is required, so this is native-only.** It does not run on the Web
   (Web MIDI has no SysEx). tcxMidi's generic examples do run on the Web.
+- Input is **event-driven**: it subscribes to `MidiIn::onMessage` (fires on
+  libremidi's input thread the moment a pad is hit) instead of polling per
+  frame, so pad timing has minimal jitter. `tcApp` guards the mode/grid state
+  shared with `update()`/`draw()` behind a mutex.
 
 Device-specific code (port choice, Programmer mode, note layout, palette) lives
 in `LaunchpadMk3.h`. The modes are plain classes in `PadModes.h`, picked by a

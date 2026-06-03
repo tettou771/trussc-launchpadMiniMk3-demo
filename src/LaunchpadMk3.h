@@ -75,6 +75,9 @@ public:
         }
         enterProgrammerMode();
         clear();
+        // Event-driven: dispatch on libremidi's input thread (lowest jitter),
+        // not by polling once per frame. onPad/onArrow run on that thread.
+        inListener_ = in_.onMessage.listen([this](MidiMessage& m) { dispatch(m); });
         return true;
     }
 
@@ -116,6 +119,7 @@ public:
 
     // Return to the normal (Live) layout and close the ports.
     void disconnect() {
+        inListener_ = tc::EventListener{};  // unsubscribe
         if (out_.isOpen()) {
             clear();
             enterLiveMode();
@@ -126,21 +130,19 @@ public:
 
     bool isConnected() const { return in_.isOpen() && out_.isOpen(); }
 
-    // Drain incoming MIDI and dispatch to onPad / onArrow. Call once per frame.
-    void update() {
-        MidiMessage m;
-        while (in_.getNextMessage(m)) {
-            if (m.isControlChange()) {
-                int cc = m.getControl();
-                if (cc >= 91 && cc <= 98 && onArrow) {
-                    onArrow(static_cast<lp::Arrow>(cc), m.getValue() > 0);
-                }
-            } else if (m.getStatus() == MidiStatus::NoteOn ||
-                       m.getStatus() == MidiStatus::NoteOff) {
-                int col, row;
-                if (noteToCell(m.getPitch(), col, row) && onPad) {
-                    onPad(col, row, m.isNoteOn(), m.getVelocity());
-                }
+    // Dispatch one incoming message to onPad / onArrow. Runs on libremidi's
+    // input thread (event-driven), so the callbacks must guard shared state.
+    void dispatch(const MidiMessage& m) {
+        if (m.isControlChange()) {
+            int cc = m.getControl();
+            if (cc >= 91 && cc <= 98 && onArrow) {
+                onArrow(static_cast<lp::Arrow>(cc), m.getValue() > 0);
+            }
+        } else if (m.getStatus() == MidiStatus::NoteOn ||
+                   m.getStatus() == MidiStatus::NoteOff) {
+            int col, row;
+            if (noteToCell(m.getPitch(), col, row) && onPad) {
+                onPad(col, row, m.isNoteOn(), m.getVelocity());
             }
         }
     }
@@ -187,4 +189,5 @@ private:
 
     MidiIn  in_;
     MidiOut out_;
+    tc::EventListener inListener_;  // onMessage subscription (RAII)
 };

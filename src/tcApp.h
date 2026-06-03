@@ -6,6 +6,8 @@
 #include "PadModes.h"
 #include "ChipKit.h"
 
+#include <mutex>
+
 using namespace tc;
 using namespace tcx;
 using namespace std;
@@ -62,4 +64,8 @@ private:
 
     bool started_ = false;          // MIDI init done (gated on midiReady())
     bool deviceConnected_ = false;
+
+    // onPad/onArrow fire on libremidi's input thread; this guards the mode +
+    // grid state they share with update()/draw().
+    std::mutex mtx_;
 };

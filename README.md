@@ -66,6 +66,11 @@ differently:
   libremidi's input thread the moment a pad is hit) instead of polling per
   frame, so pad timing has minimal jitter. `tcApp` guards the mode/grid state
   shared with `update()`/`draw()` behind a mutex.
+- The sequencer playhead and ripple growth are clocked by **`callEveryAsync`**
+  (a precise off-thread timer), not the render loop, so the sound and the device
+  LEDs stay tight regardless of frame rate. `cancelAllAsyncTimers()` discards a
+  mode's pending ticks when you switch modes. (The on-screen grid still refreshes
+  at the display rate — that part is vsync-bound.)
 
 Device-specific code (port choice, Programmer mode, note layout, palette) lives
 in `LaunchpadMk3.h`. The modes are plain classes in `PadModes.h`, picked by a

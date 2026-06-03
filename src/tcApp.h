@@ -37,14 +37,21 @@ public:
     void cleanup() override;
 
 private:
-    // Dispatch to the active mode (one switch each, all in tcApp.cpp).
+    // Orchestration (these own the mtx_ lock / cancellation discipline).
     void modeEnter();
     void modePad(int col, int row, bool pressed);
-    void modeUpdate(double t);
-
-    const char* modeName() const;
+    void asyncTick();                 // precise clock callback (scheduler thread)
     void switchMode(int delta);
-    void pushGridToDevice();
+    const char* modeName() const;
+
+    // Per-mode dispatch - one switch each (all assume mtx_ is held).
+    void enterActive();
+    void padActive(int col, int row, bool pressed);
+    void tickActive();                // advance the active mode's clock state
+    void renderActive();              // draw active-mode state into grid_
+    void startActiveClock();          // schedule the mode's async timer (if any)
+
+    void flushLeds();                 // diff grid_ -> device LEDs (caller holds mtx_)
 
     // Screen layout helpers for the mirror (row 0 is the BOTTOM row).
     float cellSize() const;

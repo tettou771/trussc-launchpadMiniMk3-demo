@@ -3,30 +3,34 @@
 // =============================================================================
 // PadModes - the three interactive modes
 // =============================================================================
-//   PaintMode      : tap pads to toggle colours (a simple paint / mirror)
+//   PaintMode      : tap pads to toggle colours (event-driven, no clock)
 //   SequencerMode  : 8 rows x 8 steps; a playhead sweeps and triggers ChipKit
 //   RippleMode     : taps spawn expanding rings of light + a blip
 //
-// Each mode is a plain class - no inheritance, no virtuals. A mode only:
-//   - reacts to a pad press in onPad()
-//   - draws itself by writing palette indices into the PadGrid in update()
-//   - makes sound through the ChipKit it is handed
-// tcApp owns one of each and picks the active one with a Mode enum + switch.
+// Each mode is a plain class - no inheritance, no virtuals. tcApp owns one of
+// each and picks the active one with a Mode enum + switch.
+//
+// Timing split: a mode separates "advance one tick of state" (step()/tick(),
+// driven by a precise async timer in tcApp) from "draw current state into the
+// grid" (render()). Paint has no clock - it only reacts to pad presses. This
+// keeps the musical timing (sound + LEDs) off the render frame rate.
 //
 // === HOW TO ADD A MODE ===
-//   1. Copy one of the classes below and rename it.
+//   1. Copy a class below and rename it.
 //   2. Add a value to `enum class Mode` in tcApp.h.
-//   3. Add a member + a `case` in tcApp's modeEnter / modePad / modeUpdate.
+//   3. Add it to tcApp's enter / pad / tick / render switches and pick its
+//      clock interval (0 = event-driven, no async timer).
 // =============================================================================
 
 #include "PadGrid.h"
 #include "ChipKit.h"
 
+#include <array>
 #include <cmath>
 #include <vector>
 
 // -----------------------------------------------------------------------------
-// 1. Paint / mirror
+// 1. Paint / mirror   (event-driven, no clock)
 // -----------------------------------------------------------------------------
 class PaintMode {
 public:
@@ -40,8 +44,7 @@ public:
         if (on_[row][col]) kit.play(row);
     }
 
-    void update(double, PadGrid& grid, ChipKit&) {
-        // Column-based rainbow so the painting is colourful.
+    void render(PadGrid& grid) const {
         static const int colColor[8] = {
             lp::color::Red,   lp::color::Orange, lp::color::Yellow, lp::color::Lime,
             lp::color::Green, lp::color::Cyan,   lp::color::Blue,   lp::color::Purple
@@ -56,36 +59,30 @@ private:
 };
 
 // -----------------------------------------------------------------------------
-// 2. Step sequencer
+// 2. Step sequencer   (clock: one step() per async tick)
 // -----------------------------------------------------------------------------
 class SequencerMode {
 public:
     void enter() {
         for (auto& row : step_) row.fill(false);
-        playCol_ = 0;
-        nextStepT_ = -1.0;  // (re)initialised on first update
+        playCol_ = 7;   // first step() wraps to column 0
     }
 
     void onPad(int col, int row, bool pressed, ChipKit&) {
         if (pressed) step_[row][col] = !step_[row][col];
     }
 
-    void update(double t, PadGrid& grid, ChipKit& kit) {
-        if (nextStepT_ < 0.0) nextStepT_ = t;  // first frame
+    // Advance the playhead one column and trigger the lit cells there.
+    void step(ChipKit& kit) {
+        playCol_ = (playCol_ + 1) % 8;
+        for (int r = 0; r < 8; ++r)
+            if (step_[r][playCol_]) kit.play(r);
+    }
 
-        // Advance the playhead at a fixed tempo.
-        if (t >= nextStepT_) {
-            playCol_ = (playCol_ + 1) % 8;
-            nextStepT_ += stepSeconds_;
-            // Trigger every lit cell in the new column.
-            for (int r = 0; r < 8; ++r)
-                if (step_[r][playCol_]) kit.play(r);
-        }
-
-        // Draw: programmed steps + the playhead column overlay.
+    void render(PadGrid& grid) const {
         for (int r = 0; r < 8; ++r) {
             for (int c = 0; c < 8; ++c) {
-                bool lit = step_[r][c];
+                bool lit  = step_[r][c];
                 bool head = (c == playCol_);
                 int color = lp::color::Off;
                 if (lit && head)      color = lp::color::Green;    // hitting now
@@ -98,13 +95,11 @@ public:
 
 private:
     std::array<std::array<bool, 8>, 8> step_{};
-    int    playCol_     = 0;
-    double nextStepT_   = -1.0;
-    double stepSeconds_ = 0.14;  // ~107 BPM in 16ths
+    int playCol_ = 7;
 };
 
 // -----------------------------------------------------------------------------
-// 3. Ripples
+// 3. Ripples   (clock: one tick() per async frame expands every ring a little)
 // -----------------------------------------------------------------------------
 class RippleMode {
 public:
@@ -112,44 +107,43 @@ public:
 
     void onPad(int col, int row, bool pressed, ChipKit& kit) {
         if (!pressed) return;
-        ripples_.push_back({col, row, lastT_});
+        ripples_.push_back({col, row, 0.0f});
         kit.play(row);
     }
 
-    void update(double t, PadGrid& grid, ChipKit&) {
-        lastT_ = t;
-        grid.clear();
+    // Grow each ring by one step; drop the ones that expanded off the grid.
+    void tick() {
+        for (auto& rp : ripples_) rp.radius += kStep;
+        std::vector<Ripple> alive;
+        for (const auto& rp : ripples_)
+            if (rp.radius < kMaxR) alive.push_back(rp);
+        ripples_.swap(alive);
+    }
 
+    void render(PadGrid& grid) const {
+        grid.clear();
         static const int ring[] = {
             lp::color::White, lp::color::Cyan, lp::color::Blue,
             lp::color::Purple, lp::color::DimBlue
         };
         constexpr int ringCount = sizeof(ring) / sizeof(ring[0]);
-        constexpr double speed = 7.0;   // cells per second
-        constexpr double maxR  = 11.0;  // lifetime in cell-radii
-
         for (const auto& rp : ripples_) {
-            double radius = (t - rp.startT) * speed;
             for (int r = 0; r < 8; ++r) {
                 for (int c = 0; c < 8; ++c) {
                     double d = std::hypot(double(c - rp.col), double(r - rp.row));
-                    if (std::abs(d - radius) < 0.8) {
-                        int idx = std::min(int(radius), ringCount - 1);
+                    if (std::abs(d - rp.radius) < 0.8) {
+                        int idx = std::min(int(rp.radius), ringCount - 1);
                         grid.set(c, r, ring[idx]);
                     }
                 }
             }
         }
-
-        // Drop ripples that have expanded past the grid.
-        std::vector<Ripple> alive;
-        for (const auto& rp : ripples_)
-            if ((t - rp.startT) * speed < maxR) alive.push_back(rp);
-        ripples_.swap(alive);
     }
 
 private:
-    struct Ripple { int col, row; double startT; };  // plain data
+    static constexpr float  kStep = 0.21f;  // cells per tick (~7 cells/s at 30 ms)
+    static constexpr double kMaxR = 11.0;   // lifetime in cell-radii
+
+    struct Ripple { int col, row; float radius; };  // plain data
     std::vector<Ripple> ripples_;
-    double lastT_ = 0.0;
 };

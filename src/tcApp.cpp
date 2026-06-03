@@ -31,7 +31,7 @@ void tcApp::update() {
         // (sending 0xF0 throws NotAllowedError). The web build can't drive it.
         logNotice("launchpad") << "web build: Launchpad needs sysex (native only)";
 #else
-        deviceConnected_ = lp_.connect("Launchpad");
+        deviceConnected_ = lp_.connect();  // default match handles win/mac/linux names
         if (deviceConnected_) {
             logNotice("launchpad") << "Connected: programmer mode on";
             lp_.setArrowLed(lp::Arrow::Left,  lp::color::DimBlue);

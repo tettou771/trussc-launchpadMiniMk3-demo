@@ -17,6 +17,7 @@
 // =============================================================================
 
 #include <tcxMidi.h>
+#include <tcPlatform.h>   // trussc::Platform::isWindows()
 
 #include <array>
 #include <functional>
@@ -63,7 +64,7 @@ public:
     // mode pad/button messages and LED control travel on the *MIDI* interface,
     // so we deliberately pick that one - opening the DAW port would light
     // nothing and receive only the side buttons.
-    bool connect(const std::string& match = "Launchpad") {
+    bool connect(const std::string& match = "LPMiniMK3") {
         int inIdx  = pickProgrammerPort(MidiIn::listDevices(),  match);
         int outIdx = pickProgrammerPort(MidiOut::listDevices(), match);
         if (inIdx < 0 || outIdx < 0) return false;
@@ -77,20 +78,40 @@ public:
         return true;
     }
 
-    // Among devices matching `match`, prefer the standalone "MIDI" interface
-    // (name contains "MIDI", not "DAW"); fall back to the first match otherwise.
+    // Pick the Mk3's Programmer-mode port (the standalone "MIDI" interface, not
+    // the "DAW" one). The two ports are named differently per platform, so we
+    // branch on the OS rather than guessing from one heuristic:
+    //
+    //   macOS / Linux : ports are "LPMiniMK3 DAW" and "LPMiniMK3 MIDI"
+    //                   -> pick the one with "MIDI" and without "DAW".
+    //   Windows       : BOTH ports carry "MIDI" and neither carries "DAW".
+    //                   The 1st (DAW) port is the bare "LPMiniMK3 MIDI"; the real
+    //                   Programmer port is the 2nd, wrapped in parentheses as
+    //                   "MIDIIN2 (LPMiniMK3 MIDI)" / "MIDIOUT2 (LPMiniMK3 MIDI)".
+    //                   -> pick the one containing "(LPMiniMK3".
     static int pickProgrammerPort(const std::vector<MidiDeviceInfo>& devices,
                                   const std::string& match) {
         int fallback = -1;
         for (const auto& d : devices) {
-            if (d.name.find(match) == std::string::npos) continue;
+            if (!isDeviceMatch(d.name, match)) continue;
             if (fallback < 0) fallback = d.portNumber;
-            if (d.name.find("MIDI") != std::string::npos &&
-                d.name.find("DAW") == std::string::npos) {
-                return d.portNumber;
+            if (trussc::Platform::isWindows()) {
+                if (d.name.find("(LPMiniMK3") != std::string::npos) return d.portNumber;
+            } else {
+                if (d.name.find("MIDI") != std::string::npos &&
+                    d.name.find("DAW") == std::string::npos) return d.portNumber;
             }
         }
         return fallback;
+    }
+
+    // Match the caller's hint plus the known device identifiers, since the
+    // Launchpad Mini Mk3 enumerates as "LPMiniMK3" on win/mac but as
+    // "Launchpad Mini MK3" on Linux (ALSA uses the USB product string).
+    static bool isDeviceMatch(const std::string& name, const std::string& match) {
+        return name.find(match) != std::string::npos ||
+               name.find("LPMiniMK3") != std::string::npos ||
+               name.find("Launchpad") != std::string::npos;
     }
 
     // Return to the normal (Live) layout and close the ports.

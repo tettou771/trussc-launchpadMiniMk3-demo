@@ -13,6 +13,7 @@ CMakePresets.json
 build/
 build-*/
 emscripten/
+android/
 xcode*/
 vs/
 
